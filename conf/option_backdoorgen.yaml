@@ -1,0 +1,24 @@
+debug: False
+
+epochs: 50
+num_users: 100
+frac: 0.8
+portion: 0.5
+no_local_save: False
+pattern_choice: 4
+iid: True
+
+dba: false
+dataset: cifar10
+model: resnet20
+start_attack: 15
+start_saving: 15
+data_portion: 0.2
+
+results_save: pattern
+
+robust: False
+penalty: 0.3
+robust_range: [10,40]
+rb_rootpth: ./data/rblists
+rb_wait: False
