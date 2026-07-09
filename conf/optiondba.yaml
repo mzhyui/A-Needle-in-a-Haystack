@@ -1,0 +1,15 @@
+epochs: 50
+num_users: 100
+frac: 0.8
+portion: 0.2
+no_local_save: False
+pattern_choice: 1
+robust: False
+iid: True
+dba: True
+
+dataset: mnist
+model: lenet
+start_saving: 5
+
+results_save: pattern

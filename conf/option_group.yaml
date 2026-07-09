@@ -1,0 +1,31 @@
+epochs: 20
+num_users: 100
+frac: 0.8
+portion: 0.4
+
+iid: True
+
+dba: False
+
+dataset: mnist
+model: lenet
+
+start_attack: 5
+position_choice: [5,5]
+data_portion: 0.7
+pattern_choice: 1
+local_ep_times: 2
+
+no_local_save: False
+start_saving: 5
+global_saving: 10
+global_saving_rate: 10
+normal_save_at_mod: 1
+
+results_save: pattern
+
+robust: False
+clipping: False
+rlr: False
+
+groupattack: True

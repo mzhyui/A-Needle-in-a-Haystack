@@ -1,0 +1,5 @@
+python main_parallel.py --config ./conf/rb_gtsrb_resnet20sm_static_dirichlet.yaml --data_augmentation_local 2 --data_portion 0.4 --debug --enable_rb 0 --gpu 1
+python main_parallel.py --config ./conf/rb_gtsrb_resnet20sm_static_dirichlet.yaml --data_augmentation_local 2 --data_portion 0.4 --debug --enable_rb 0 --gpu 1 --attack_type dba
+python main_parallel.py --config ./conf/rb_gtsrb_resnet20sm_static_dirichlet.yaml --data_augmentation_local 2 --data_portion 0.7 --debug --enable_rb 0 --gpu 1 --attack_type dark
+python main_parallel.py --config ./conf/rb_gtsrb_resnet20sm_static_dirichlet.yaml --data_augmentation_local 2 --data_portion 0.4 --debug --enable_rb 0 --gpu 1 --attack_type 3dfed
+python main_parallel.py --config ./conf/rb_gtsrb_resnet20sm_static_dirichlet.yaml --data_augmentation_local 2 --data_portion 0.4 --debug --enable_rb 0 --gpu 1 --attack_type invisible
