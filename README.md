@@ -1,4 +1,6 @@
-# FL_box_dev
+# A-Needle-in-a-Haystack (FL_Box)
+
+Implementation of **[A Needle in a Haystack: Defending Federated Learning Backdoor Attacks via Orthogonal Subnetwork Pruning](https://ieeexplore.ieee.org/abstract/document/11571338/)**, published in **IEEE INFOCOM 2026**.
 
 Federated-learning research environment for evaluating backdoor attacks and server-side defenses. The project builds on [LG-FedAvg](https://github.com/pliang279/LG-FedAvg) and combines attack, aggregation, detection, and model-analysis workflows.
 
@@ -48,3 +50,18 @@ bash scripts/get_base.sh -f scripts/batch_run_rb0_resnet_gtsrb.sh
 ## Experiment checks
 
 Report clean-task accuracy, attack success rate, and local-model behavior together. Preserve the exact configuration, command, dataset split, random seed, and output directory with each result. The main open work is improving attack stability, TSS/GSS detection quality, GPU memory usage, and resume/test coverage.
+
+## Citation
+
+This repository contains the source code and experimental framework associated with the following publication. If you use this code, configurations, or results in your research, please cite:
+
+```bibtex
+@inproceedings{ma2026needle,
+  author    = {Zihan Ma and Guangchi Liu and Xiangyu Xu and Shaofeng Li and Zhen Ling and Junzhou Luo},
+  title     = {A Needle in a Haystack: Defending Federated Learning Backdoor Attacks via Orthogonal Subnetwork Pruning},
+  booktitle = {IEEE INFOCOM 2026 - IEEE Conference on Computer Communications},
+  year      = {2026},
+  pages     = {1--10},
+  doi       = {10.1109/INFOCOM59046.2026.11571338}
+}
+```
