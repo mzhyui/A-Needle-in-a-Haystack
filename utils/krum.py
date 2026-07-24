@@ -1,7 +1,7 @@
 from collections import OrderedDict
+from typing import Any, List, Tuple
 
 import torch
-from typing import Callable, List, Tuple, Dict, Any
 
 """
 from https://github.com/FedML-AI/FedML
@@ -14,27 +14,30 @@ https://infoscience.epfl.ch/record/287261
 """
 
 
-def compute_euclidean_distance(v1, v2, device='cuda'):
-    v1 = v1.to(device)
-    v2 = v2.to(device)
-    return (v1 - v2).norm()
+def compute_euclidean_distance(first_vector, second_vector, device='cuda'):
+    first_vector = first_vector.to(device)
+    second_vector = second_vector.to(device)
+    return (first_vector - second_vector).norm()
 
 
 def vectorize_weight(state_dict):
-    weight_list = []
-    for (k, v) in state_dict.items():
-        if is_weight_param(k):
-            weight_list.append(v.flatten())
-    return torch.cat(weight_list)
+    weights = [
+        tensor.flatten()
+        for parameter_name, tensor in state_dict.items()
+        if is_weight_param(parameter_name)
+    ]
+    return torch.cat(weights)
 
-def is_weight_param(k):
+
+def is_weight_param(parameter_name):
     return (
-            "running_mean" not in k
-            and "running_var" not in k
-            and "num_batches_tracked" not in k
+        "running_mean" not in parameter_name
+        and "running_var" not in parameter_name
+        and "num_batches_tracked" not in parameter_name
     )
 
-class KrumDefense():
+
+class KrumDefense:
     def __init__(self, byzantine_client_num, krum_param_m=1):
         self.byzantine_client_num = byzantine_client_num
 
@@ -46,37 +49,35 @@ class KrumDefense():
         raw_client_grad_list: List[Tuple[float, OrderedDict]],
         extra_auxiliary_info: Any = None,
     ):
-        num_client = len(raw_client_grad_list)
+        client_count = len(raw_client_grad_list)
         # in the Krum paper, it says 2 * byzantine_client_num + 2 < client #
-        if not 2 * self.byzantine_client_num + 2 <= num_client - self.krum_param_m:
+        if not 2 * self.byzantine_client_num + 2 <= client_count - self.krum_param_m:
             raise ValueError(
                 "byzantine_client_num conflicts with requirements in Krum: 2 * byzantine_client_num + 2 < client number - krum_param_m"
             )
 
-        vec_local_w = [
-            vectorize_weight(raw_client_grad_list[i][1])
-            for i in range(0, num_client)
+        client_vectors = [
+            vectorize_weight(weights)
+            for _, weights in raw_client_grad_list
         ]
-        krum_scores = self._compute_krum_score(vec_local_w)
-        score_index = torch.argsort(
-            torch.Tensor(krum_scores)
-        ).tolist()  # indices; ascending
-        score_index = score_index[0: self.krum_param_m]
-        return [raw_client_grad_list[i] for i in score_index]
+        scores = self._compute_krum_score(client_vectors)
+        selected_indices = torch.argsort(torch.tensor(scores)).tolist()
+        selected_indices = selected_indices[:self.krum_param_m]
+        return [raw_client_grad_list[index] for index in selected_indices]
 
-    def _compute_krum_score(self, vec_grad_list):
-        krum_scores = []
-        num_client = len(vec_grad_list)
-        for i in range(0, num_client):
-            dists = []
-            for j in range(0, num_client):
-                if i != j:
-                    dists.append(
+    def _compute_krum_score(self, client_vectors):
+        scores = []
+        client_count = len(client_vectors)
+        for client_index, client_vector in enumerate(client_vectors):
+            distances = []
+            for other_index, other_vector in enumerate(client_vectors):
+                if client_index != other_index:
+                    distances.append(
                         compute_euclidean_distance(
-                            vec_grad_list[i], vec_grad_list[j]
+                            client_vector, other_vector
                         ).item() ** 2
                     )
-            dists.sort()  # ascending
-            score = dists[0: num_client - self.byzantine_client_num - 2]
-            krum_scores.append(sum(score))
-        return krum_scores
+            distances.sort()
+            neighbor_count = client_count - self.byzantine_client_num - 2
+            scores.append(sum(distances[:neighbor_count]))
+        return scores

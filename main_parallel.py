@@ -8,7 +8,6 @@ import math
 import os
 import pickle
 import re
-import time
 import atexit
 
 import numpy as np
@@ -32,6 +31,93 @@ from utils.assess import Assessor, reverse_engineer, realTriggerImportance
 from utils.logger import myLogger
 
 
+TSS_DEFENSE_OPTIONS = (
+    "tss_statistical_ban",
+    "tss_statistical_reject",
+    "tss_statistical_reject_kmeans",
+    "tss_statistical_layerwise",
+    "tss_statistical_reject_trigger",
+    "tss_statistical_reject_noise",
+    "tss_hard_reject",
+)
+
+
+def get_defense_method(args):
+    if args.krum or args.mkrum:
+        return "Krum"
+    if args.clipping:
+        return "Clipping"
+    if args.tracer:
+        return "Tracer"
+    if args.rlr:
+        return "RLR"
+    if any(getattr(args, option) < 999 for option in TSS_DEFENSE_OPTIONS):
+        return "TSS"
+    if args.tss_soft_reject < 999:
+        return "TSSSoftReject"
+    if args.grad_mask_only < 999:
+        return "GradReject"
+    if args.gss < 999:
+        return "GSS"
+    return "FLAME" if args.flame else "None"
+
+
+def get_distribution_metric(args):
+    metrics = {
+        "iid": 0,
+        "shard": args.shard_per_user,
+        "dirichlet": args.dirichlet_alpha,
+        "unbalanced": args.ub_label,
+    }
+    try:
+        return metrics[args.noniid_metric]
+    except KeyError:
+        raise ValueError(f"Unknown non-IID metric: {args.noniid_metric}")
+
+
+def get_run_directory(args, timestamp):
+    if args.base_dir and args.load_fed:
+        return args.base_dir
+
+    distribution = f"{args.noniid_metric}{get_distribution_metric(args)}"
+    run_name = f"{get_defense_method(args)}_{timestamp:%m-%d--%H-%M-%S}"
+    return os.path.join(
+        args.results_save,
+        "debug" if args.debug else "release",
+        args.dataset,
+        distribution,
+        f"{args.model}_num-{args.num_users}_C-{args.frac}",
+        args.attack_type,
+        f"lr{args.lr}ep{args.local_ep}",
+        run_name,
+    )
+
+
+def create_run_directories(base_dir):
+    for directory in (
+        "fed",
+        "local_attack_save",
+        "local_normal_save",
+        "visual",
+        "assessor",
+    ):
+        os.makedirs(os.path.join(base_dir, directory), exist_ok=True)
+
+
+def select_attack_clients(all_clients, attacker_portion, configured_attackers):
+    if configured_attackers:
+        return np.array(configured_attackers)
+    attacker_count = math.ceil(len(all_clients) * attacker_portion)
+    return np.random.choice(all_clients, size=attacker_count, replace=False)
+
+
+def select_normal_save_clients(round_clients, normal_clients, attack_clients):
+    round_normal_clients = np.intersect1d(round_clients, normal_clients)
+    round_attack_clients = np.intersect1d(round_clients, attack_clients)
+    save_count = min(len(round_normal_clients), len(round_attack_clients))
+    return np.random.choice(round_normal_clients, save_count, replace=False)
+
+
 def exit_handler(logger: myLogger):
     logger.info("Exiting...")
     logger.info(datetime.datetime.now().strftime("%m-%d--%H-%M-%S"))
@@ -39,81 +125,43 @@ def exit_handler(logger: myLogger):
     logger.announceDir()
 
 
-if __name__ == '__main__':
-    # %% parse args
+if __name__ == "__main__":
     args = args_parser()
-    args.device = torch.device('cuda:{}'.format(
-        args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
+    args.device = torch.device(
+        f"cuda:{args.gpu}" if torch.cuda.is_available() and args.gpu != -1 else "cpu"
+    )
 
     spawn_ctx = mp.get_context('spawn')
-    fork_ctx = mp.get_context('fork')
     now = datetime.datetime.now()
+    base_dir = get_run_directory(args, now)
 
-    def getDefenseMethod():
-        if args.krum or args.mkrum:
-            return "Krum"
-        elif args.clipping:
-            return "Clipping"
-        elif args.tracer:
-            return "Tracer"
-        elif args.rlr:
-            return "RLR"
-        elif args.tss_statistical_ban < 999 \
-                or args.tss_statistical_reject < 999 or args.tss_statistical_reject_kmeans < 999 or args.tss_statistical_layerwise < 999 or args.tss_statistical_reject_trigger < 999 or args.tss_statistical_reject_noise < 999\
-                or args.tss_hard_reject < 999:
-            return "TSS"
-        elif args.tss_soft_reject < 999:
-            return "TSSSoftReject"
-        elif args.grad_mask_only < 999:
-            return "GradReject"
-        elif args.gss < 999:
-            return "GSS"
-        elif args.flame:
-            return "FLAME"
-        else:
-            return 'None'
-
-    if args.base_dir and args.load_fed:
-        base_dir = args.base_dir
-    else:
-        if args.noniid_metric == 'iid':
-            distribution_metric = 0
-        elif args.noniid_metric == 'shard':
-            distribution_metric = args.shard_per_user
-        elif args.noniid_metric == 'dirichlet':
-            distribution_metric = args.dirichlet_alpha
-        elif args.noniid_metric == 'unbalanced':
-            distribution_metric = args.ub_label
-        else:
-            raise ValueError("noniid_metric not found")
-        base_dir = os.path.join(args.results_save, 'debug' if (args.debug) else 'release', args.dataset, args.noniid_metric+str(distribution_metric), f'{args.model}_num-{args.num_users}_C-{args.frac}',
-                                args.attack_type, f'lr{args.lr}ep{args.local_ep}', f"{getDefenseMethod()}_{now.strftime('%m-%d--%H-%M-%S')}")
-
-    logger = myLogger(name=str(os.getpid()), log_dir=os.path.join(base_dir), log_filename=os.path.basename(
-        __file__)+'.log', debug=args.debug, verbose=args.verbose, propagate=args.propagate, arg_dict=args.__dict__)
+    logger = myLogger(
+        name=str(os.getpid()),
+        log_dir=base_dir,
+        log_filename=f"{os.path.basename(__file__)}.log",
+        debug=args.debug,
+        verbose=args.verbose,
+        propagate=args.propagate,
+        arg_dict=args.__dict__,
+    )
     logger.print("Base_dir: ", base_dir)
     args.base_dir = base_dir
-
-    if not os.path.exists(os.path.join(base_dir, 'fed')):
-        os.makedirs(os.path.join(base_dir, 'fed'), exist_ok=True)
-    if not os.path.exists(os.path.join(base_dir, 'local_attack_save')):
-        os.makedirs(os.path.join(base_dir, 'local_attack_save'), exist_ok=True)
-    if not os.path.exists(os.path.join(base_dir, 'local_normal_save')):
-        os.makedirs(os.path.join(base_dir, 'local_normal_save'), exist_ok=True)
-    if not os.path.exists(os.path.join(base_dir, 'visual')):
-        os.makedirs(os.path.join(base_dir, 'visual'), exist_ok=True)
-    if not os.path.exists(os.path.join(base_dir, 'assessor')):
-        os.makedirs(os.path.join(base_dir, 'assessor'), exist_ok=True)
+    create_run_directories(base_dir)
 
     logger.registerDir(base_dir)
     atexit.register(exit_handler, logger)
 
-    # %% build model
-    data_parallel_devices = list(
-        range(torch.cuda.device_count())) and args.gpu_list
+    data_parallel_devices = args.gpu_list if torch.cuda.device_count() else []
     logger.print("Working on device:", data_parallel_devices or args.device)
-    net_glob = getModel(model_name=args.model, dataset=args.dataset,
-                        num_channels=args.num_channels, num_classes=args.num_classes, input_size=args.input_size, device=args.device, device_list=data_parallel_devices)
+    net_glob = getModel(
+        model_name=args.model,
+        dataset=args.dataset,
+        num_channels=args.num_channels,
+        num_classes=args.num_classes,
+        input_size=args.input_size,
+        device=args.device,
+        device_list=data_parallel_devices,
+    )
     last_global_dict = net_glob.state_dict()
     net_glob.train()
 
@@ -128,59 +176,46 @@ if __name__ == '__main__':
 
     logger.info(net_glob.state_dict().keys())
 
-    # %% apply settings
     results_save_path = os.path.join(base_dir, 'fed', 'results.csv')
-    pd_header = pd.DataFrame([], columns=['epoch', 'loss_avg', 'loss_test',
-                             'acc_test', 'best_acc', 'correct_prediction', 'attack_prediction'])
-    pd_header.to_csv(results_save_path, mode='a', index=False, header=True)
+    result_columns = [
+        'epoch',
+        'loss_avg',
+        'loss_test',
+        'acc_test',
+        'best_acc',
+        'correct_prediction',
+        'attack_prediction',
+    ]
+    pd.DataFrame(columns=result_columns).to_csv(
+        results_save_path, mode='a', index=False, header=True
+    )
 
-    loss_train = []
-    net_best = None
-    best_loss = None
     best_acc = -1
     best_epoch = None
-
     lr = args.lr
-
-    # clipping = args.clipping
     attack_portion = args.portion
-    argsDict = args.__dict__
-    atk_label = args.label
     with_local_save = not args.no_local_save
-    # save_interval = args.normal_clients_save_interval if args.normal_clients_save_interval > 0 else (
-    #     1-attack_portion)/attack_portion
-    pattern_choice = args.pattern_choice
-    # pr = args.penalty
-    rb_range = list(range(args.robust_range[0], args.robust_range[1]))
 
     with open(os.path.join(base_dir, 'settings.yaml'), 'w') as f:
-        yaml.dump(argsDict, f, default_flow_style=False)
-    logger.info(argsDict)
+        yaml.dump(vars(args), f, default_flow_style=False)
+    logger.info(vars(args))
 
     logger.info("begin")
     logger.info(datetime.datetime.now().strftime("%m-%d--%H-%M-%S"))
-    b_time = time.time()
 
-    all_users = np.array(range(args.num_users))
-    # %% init user weights
-    idxs_weight_dict = dict(
-        list(zip(all_users, np.linspace(100, 100, args.num_users, dtype=int))))
-    # indices weight is for calculating the summed up NN params of all clients, and then divide the summed up weight to get the average weight
-    # attack_clients = np.array(
-    #     all_users[0:math.ceil(len(all_users) * attack_portion)])
-    # rand set attack clients
-    if args.attackers == []:
-        attack_clients = np.random.choice(
-            all_users, size=math.ceil(len(all_users) * attack_portion), replace=False)
-    else:
-        attack_clients = np.array(args.attackers)
-    # attack_clients = np.array(
-    #     all_users[-math.ceil(len(all_users) * attack_portion):])
+    all_users = np.arange(args.num_users)
+    client_weights = dict(zip(all_users, np.full(args.num_users, 100)))
+    attack_clients = select_attack_clients(
+        all_users, attack_portion, args.attackers
+    )
     normal_clients = np.setdiff1d(all_users, attack_clients)
     logger.info(f"attack_clients: {attack_clients}")
-    attacker_default.setAttackClients(attack_clients.tolist())
-    attacker_dict = {idx: Attacker(args=args, attack_clients=tuple(
-        attack_clients.tolist())) for idx in attack_clients.tolist()}
+    attack_client_ids = attack_clients.tolist()
+    attacker_default.setAttackClients(attack_client_ids)
+    attacker_dict = {
+        client_id: Attacker(args=args, attack_clients=tuple(attack_client_ids))
+        for client_id in attack_client_ids
+    }
 
     if (args.load_fed != ''):
         net_glob.load_state_dict(torch.load(args.load_fed, weights_only=True))
@@ -199,84 +234,106 @@ if __name__ == '__main__':
     dict_save_path = os.path.join(base_dir, 'dict_users.pkl')
     with open(dict_save_path, 'wb') as dict_save_path_handle:
         pickle.dump((dict_users_train, dict_users_test), dict_save_path_handle)
-    logger.info([len(x_dict) for x_id, x_dict in dict_users_train.items()])
+    logger.info([len(user_indices) for user_indices in dict_users_train.values()])
 
-    plotDataDistribution(dict_users=dict_users_train, dataset=dataset_train, num_classes=args.num_classes,
-                         fig_path=os.path.join(base_dir, 'visual', 'train_data_distribution.png'))
-    plotDataDistribution(dict_users=dict_users_test, dataset=dataset_test, num_classes=args.num_classes,
-                         fig_path=os.path.join(base_dir, 'visual', 'test_data_distribution.png'))
+    plotDataDistribution(
+        dict_users=dict_users_train,
+        dataset=dataset_train,
+        num_classes=args.num_classes,
+        fig_path=os.path.join(base_dir, 'visual', 'train_data_distribution.png'),
+    )
+    plotDataDistribution(
+        dict_users=dict_users_test,
+        dataset=dataset_test,
+        num_classes=args.num_classes,
+        fig_path=os.path.join(base_dir, 'visual', 'test_data_distribution.png'),
+    )
 
     assert args.load_begin_epoch <= args.epochs
     # %% training
     stats = ""
-    pbar = tqdm(range(args.load_begin_epoch, args.epochs+1), ncols=200)
+    pbar = tqdm(range(args.load_begin_epoch, args.epochs + 1), ncols=200)
     for iter_ in pbar:
         # %% round init
         net_glob.train()
-        server_defender.robust_list = [0]*len(all_users)
-        # if server_defender.enabled:
-        #     server_defender.guess(args=args)
+        server_defender.robust_list = [0] * len(all_users)
         if args.debug:
-            # print("rb_range", rb_range)
             logger.info(
-                f"current average weight: {np.mean(list(idxs_weight_dict.values()))}")
+                f"current average weight: {np.mean(list(client_weights.values()))}")
 
-        w_glob = None
         w_local_list = []
         loss_locals = []
-        if args.dynamic_frac != [] and iter_ == args.dynamic_frac[0]:
+        if args.dynamic_frac and iter_ == args.dynamic_frac[0]:
             args.frac = args.dynamic_frac[1]
             args.dynamic_frac = args.dynamic_frac[2:]
-        m = max(int(args.frac * args.num_users), 1)
-        current_round_users_indices = np.sort(
-            np.random.choice(all_users, m, replace=False))
-        normal_save_candidates = np.random.choice(np.intersect1d(current_round_users_indices, normal_clients), min(len(np.intersect1d(current_round_users_indices, normal_clients)), len(
-            np.intersect1d(current_round_users_indices, attack_clients))), replace=False)
-        pbar.set_description("Round {}, lr: {:.6f}".format(iter_, lr))
+        selected_client_count = max(int(args.frac * args.num_users), 1)
+        selected_clients = np.sort(
+            np.random.choice(all_users, selected_client_count, replace=False)
+        )
+        normal_save_clients = select_normal_save_clients(
+            selected_clients, normal_clients, attack_clients
+        )
+        pbar.set_description(f"Round {iter_}, lr: {lr:.6f}")
 
-        # %% training
-        normal_training_list = np.intersect1d(
-            current_round_users_indices, normal_clients)
-        attack_training_list = np.intersect1d(
-            current_round_users_indices, attack_clients)
-        parallel_client_list = np.concatenate(
-            (normal_training_list, attack_training_list))
-        # shuffle parallel_client_list
-        np.random.shuffle(parallel_client_list)
+        normal_training_clients = np.intersect1d(selected_clients, normal_clients)
+        attack_training_clients = np.intersect1d(selected_clients, attack_clients)
+        training_clients = np.concatenate(
+            (normal_training_clients, attack_training_clients)
+        )
+        np.random.shuffle(training_clients)
         task_slices = []
         tasks = []
         if args.parallel:
-            allocate_threads = min(args.threads, len(parallel_client_list))
-            if allocate_threads != 0:
-                with spawn_ctx.Pool(processes=allocate_threads) as pool:
-                    # tasks = [(iter_, idx, args, (idx in attack_training_list), attacker_default if idx not in attack_clients.tolist() else attacker_dict[idx], server_defender, current_round_users_indices, idxs_weight_dict, net_glob, last_global_dict,
-                    tasks = [(iter_, idx, args, (idx in attack_training_list), attacker_default if (idx not in attack_clients.tolist()) else attacker_dict[idx], server_defender, current_round_users_indices, idxs_weight_dict, net_glob, last_global_dict,
-                              dataset_train, dict_users_train, lr, with_local_save, base_dir, normal_save_candidates) for idx in parallel_client_list]
-                    task_slices = [tasks[i::allocate_threads]
-                                   for i in range(allocate_threads)]
+            worker_count = min(args.threads, len(training_clients))
+            if worker_count:
+                with spawn_ctx.Pool(processes=worker_count) as pool:
+                    tasks = [
+                        (
+                            iter_, client_id, args,
+                            client_id in attack_training_clients,
+                            attacker_default if client_id not in attack_client_ids
+                            else attacker_dict[client_id],
+                            server_defender, selected_clients, client_weights,
+                            net_glob, last_global_dict, dataset_train,
+                            dict_users_train, lr,
+                            with_local_save, base_dir, normal_save_clients,
+                        )
+                        for client_id in training_clients
+                    ]
+                    task_slices = [
+                        tasks[index::worker_count] for index in range(worker_count)
+                    ]
                     results = pool.map(parallelTrainingIntegrated, task_slices)
-                    for result in results:
-                        for sub_result in result:
-                            idx, w_local, idxs_weight_dict[idx], loss = sub_result
+                    for task_results in results:
+                        for client_id, local_weights, client_weight, loss in task_results:
+                            client_weights[client_id] = client_weight
                             loss_locals.append(loss)
-                            w_local_list.append(
-                                [idx, w_local, idxs_weight_dict[idx]])
+                            w_local_list.append([client_id, local_weights, client_weight])
             else:
                 raise ValueError(
-                    "allocate_threads is 0, please check args.threads and parallel_client_list")
+                    "No training clients were selected; check --threads and --frac."
+                )
         else:
-            for idx in parallel_client_list:
-                if idx in attack_training_list:
-                    idx, w_local, idxs_weight_dict[idx], loss = train_user_attack(
-                        # iter_, idx, args, attacker_default, server_defender, current_round_users_indices, idxs_weight_dict, net_glob, last_global_dict, dataset_train, dict_users_train, lr, with_local_save, base_dir)
-                        iter_, idx, args, attacker_default if (idx not in attack_clients.tolist()) else attacker_dict[idx], server_defender, current_round_users_indices, idxs_weight_dict, net_glob, last_global_dict, dataset_train, dict_users_train, lr, with_local_save, base_dir)
+            for client_id in training_clients:
+                if client_id in attack_training_clients:
+                    client_id, local_weights, client_weight, loss = train_user_attack(
+                        iter_, client_id, args,
+                        attacker_default if client_id not in attack_client_ids
+                        else attacker_dict[client_id],
+                        server_defender, selected_clients, client_weights,
+                        net_glob, last_global_dict, dataset_train,
+                        dict_users_train, lr,
+                        with_local_save, base_dir,
+                    )
                 else:
-                    idx, w_local, idxs_weight_dict[idx], loss = train_user_normal(
-                        iter_, idx, args, server_defender, idxs_weight_dict, net_glob, dataset_train, dict_users_train, lr, with_local_save, base_dir, normal_save_candidates)
+                    client_id, local_weights, client_weight, loss = train_user_normal(
+                        iter_, client_id, args, server_defender, client_weights,
+                        net_glob, dataset_train, dict_users_train, lr,
+                        with_local_save, base_dir, normal_save_clients,
+                    )
+                client_weights[client_id] = client_weight
                 loss_locals.append(loss)
-                w_local_list.append([idx, w_local, idxs_weight_dict[idx]])
-
-        # w_glob_list = sorted(w_glob_list, key=lambda x: x[0])
+                w_local_list.append([client_id, local_weights, client_weight])
 
         # %% aggregate and defend
         lr *= args.lr_decay
@@ -607,9 +664,9 @@ if __name__ == '__main__':
                 # net_cl = type(net_glob)()
                 net_cl = copy.deepcopy(net_glob)
                 net_cl.load_state_dict(w_local)
-                if idx in np.intersect1d(current_round_users_indices, attack_clients):
+                if idx in attack_training_clients:
                     CL(net_cl, 'attack'+str(iter_))
-                elif idx in np.intersect1d(current_round_users_indices, normal_clients):
+                elif idx in normal_training_clients:
                     CL(net_cl, 'normal'+str(iter_))
                 del net_cl
             CL(net_glob, 'global'+str(iter_))
@@ -751,7 +808,6 @@ if __name__ == '__main__':
             del net_el
 
         if (args.trigger_tss_eval and iter_ % args.trigger_tss_eval == 0):
-            eval_dataset = evaluator.dataset_test
             pattern = attacker_default.getPattern(0)
             mask, trigger = attacker_default.getTrigger(
                 evaluator.dataset_test, 0)
@@ -776,7 +832,6 @@ if __name__ == '__main__':
             del net_el
 
         if (args.trigger_tss_eval_v2 and iter_ % args.trigger_tss_eval_v2 == 0):
-            eval_dataset = evaluator.dataset_test
             pattern = attacker_default.getPattern(0)
             mask, trigger = attacker_default.getTrigger(
                 evaluator.dataset_test, 0)
@@ -808,7 +863,6 @@ if __name__ == '__main__':
             del net_el
 
         if (args.trigger_gss_eval and iter_ % args.trigger_gss_eval == 0):
-            eval_dataset = evaluator.dataset_test
             pattern = attacker_default.getPattern(0)
             mask, trigger = attacker_default.getTrigger(
                 evaluator.dataset_test, 0)
@@ -840,7 +894,6 @@ if __name__ == '__main__':
             del net_el
 
         if (args.trigger_gss_eval_v2 and iter_ % args.trigger_gss_eval_v2 == 0):
-            eval_dataset = evaluator.dataset_test
             pattern = attacker_default.getPattern(0)
             mask, trigger = attacker_default.getTrigger(
                 evaluator.dataset_test, 0)
@@ -876,7 +929,6 @@ if __name__ == '__main__':
         # %% evaluate
         # print loss
         loss_avg = sum(loss_locals) / len(loss_locals)
-        loss_train.append(loss_avg)
 
         if (iter_) % args.test_freq == 0:
             net_glob_eval = copy.deepcopy(net_glob)
@@ -890,12 +942,12 @@ if __name__ == '__main__':
             logger(f'Round {iter_:3d}, Average loss {loss_avg:.3f}, Test loss {loss_test:.3f}, Test accuracy: {acc_test:.2f}, Backdoor base acc: {correct_prediction:.2f}, Backdoor target acc: {attack_prediction:.2f}')
 
             if acc_test > best_acc:
-                net_best = net_glob_eval
                 best_acc = acc_test
                 best_epoch = iter_
                 best_save_path = os.path.join(
-                    base_dir, 'fed', 'attack_portion{}_best.pt'.format(attack_portion))
-                torch.save(net_best.state_dict(), best_save_path)
+                    base_dir, 'fed', f'attack_portion{attack_portion}_best.pt'
+                )
+                torch.save(net_glob_eval.state_dict(), best_save_path)
                 logger(f'Best updated, iter_: {iter_}, acc: {best_acc}')
 
             current_results = np.array([iter_, loss_avg, loss_test, acc_test,

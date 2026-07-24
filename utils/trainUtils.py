@@ -1,8 +1,7 @@
-import re
-from PIL import Image
 import copy
 import gc
 import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -15,54 +14,61 @@ from utils.clip import clipping
 from utils.krum import KrumDefense
 
 
-def getModel(model_name: str, dataset: str, num_channels: int = 3, num_classes: int = 10, input_size=32, device: str | torch.device ='cuda', device_list:list=[], rand_init: int = 0, option: str = 'B'):
+def configure_softmask_model(model):
+    set_compute_mask_impt(model, False)
+    set_ft_task(model, 0)
+
+
+def getModel(
+    model_name: str,
+    dataset: str,
+    num_channels: int = 3,
+    num_classes: int = 10,
+    input_size=32,
+    device: str | torch.device = 'cuda',
+    device_list=None,
+    rand_init: int = 0,
+    option: str = 'B',
+):
     if model_name == 'vgg' and dataset == 'cifar10':
         net_glob = vgg16(num_channels, num_classes).to(device)
     elif model_name == 'vgg' and dataset == 'GTSRB':
         # net_glob = VGG16softmasking(num_channels, num_classes, input_size=input_size).to(device)
         net_glob = vgg16(num_channels, num_classes,
                            input_size=input_size).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
 
     elif model_name == 'vggsm' and dataset == 'cifar10':
         # net_glob = VGG16softmasking(num_channels, num_classes).to(device)
         net_glob = vgg16sm(num_channels, num_classes,
                            input_size=input_size).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
     elif model_name == 'vggsm' and dataset == 'GTSRB':
         # net_glob = VGG16softmasking(num_channels, num_classes, input_size=input_size).to(device)
         net_glob = vgg16sm(num_channels, num_classes,
                            input_size=input_size).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
     elif model_name == 'vggsm' and dataset == 'fmnist':
         # net_glob = VGG16softmasking(num_channels, num_classes, input_size=input_size).to(device)
         net_glob = vgg16sm(num_channels, num_classes,
                            input_size=input_size).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
 
     elif model_name == 'lenetsm' and dataset == 'cifar10':
         net_glob = lenetsm(num_channels, num_classes).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
     elif model_name == 'lenetsm' and dataset == 'GTSRB':
         net_glob = lenetsm(num_channels, num_classes,
                            input_size=input_size).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
     elif model_name == 'lenetsm' and dataset == 'mnist':
         net_glob = lenetsm(
             num_channels, num_classes, input_size=28).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
     elif model_name == 'lenetsm' and dataset == 'fmnist':
         net_glob = lenetsm(
             num_channels, num_classes, input_size=28).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
 
     elif model_name == 'lenet' and dataset == 'mnist':
         net_glob = LeNet(num_channels=num_channels, input_size=28).to(device)
@@ -77,20 +83,17 @@ def getModel(model_name: str, dataset: str, num_channels: int = 3, num_classes: 
     elif model_name == 'resnet20sm' and dataset == 'cifar10':
         net_glob = resnet20sm(
             num_channels, num_classes).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
 
     elif model_name == 'resnet20sm' and dataset == 'cifar100':
         net_glob = resnet20sm(
             num_channels, num_classes).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
 
     elif model_name == 'resnet20sm' and dataset == 'GTSRB':
         net_glob = resnet20sm(
             num_channels, num_classes).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
 
     elif model_name == 'vit' and dataset == 'cifar10':
         net_glob = vit_tiny_cifar10(
@@ -98,13 +101,11 @@ def getModel(model_name: str, dataset: str, num_channels: int = 3, num_classes: 
     elif model_name == 'vitsm' and dataset == 'cifar10':
         net_glob = vitsm(num_channels, num_classes,
                          input_size=input_size).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
     elif model_name == 'vitsm' and dataset == 'cifar100':
         net_glob = vitsm(num_channels, num_classes,
                          input_size=input_size).to(device)
-        set_compute_mask_impt(net_glob, False)
-        set_ft_task(net_glob, 0)
+        configure_softmask_model(net_glob)
 
     # elif model_name == 'resnet20' and dataset == 'cifar10':
     #     net_glob = resnet20(option=option, rand_init=rand_init).to(device)
@@ -126,7 +127,7 @@ def getModel(model_name: str, dataset: str, num_channels: int = 3, num_classes: 
     else:
         raise ValueError('Error: unrecognized model')
 
-    if len(device_list) > 0:
+    if device_list:
         return nn.DataParallel(net_glob, device_list)
     return net_glob
 
@@ -154,44 +155,84 @@ def compare_weights(w1, w2):
     return True
 
 
-def getWglob(w_glob_list: list, exclude=[]):
-    # Filter out excluded client indices
-    assert len(w_glob_list) >= 1
-    
-    w_glob_list = [(idx, w_local, idxs_weight_dict) for idx, w_local,
-                   idxs_weight_dict in w_glob_list if idx not in exclude]
+def get_local_training_params(args):
+    return {
+        'data_augmentation_local': args.data_augmentation_local,
+        'model': args.model,
+        'dataset': args.dataset,
+        'num_classes': args.num_classes,
+        'data_portion': args.data_portion,
+        'max_workers': args.max_workers,
+        'local_bs': args.local_bs,
+        'local_ep': args.local_ep,
+        'local_ep_times': args.local_ep_times,
+        'input_size': args.input_size,
+        'blend_alpha': args.blend_alpha,
+        'local_ep_pretrain': args.local_ep_pretrain,
+        'attack_type': args.attack_type,
+        'pattern_choice': args.pattern_choice,
+        'pos_choice': args.pos_choice,
+        'label': args.label,
+        'device': args.device,
+    }
+
+
+def scale_model_update(local_weights, reference_model, round_clients, device):
+    client_count = len(round_clients)
+    reference_weights = reference_model.to(device).state_dict()
+    for layer_name in local_weights:
+        local_weights[layer_name] = (
+            client_count * local_weights[layer_name]
+            - (client_count - 1) * reference_weights[layer_name]
+        )
+    return local_weights
+
+
+def clear_training_cache():
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+def getWglob(w_glob_list: list, exclude=None):
+    assert w_glob_list
+    excluded_clients = set() if exclude is None else set(exclude)
+    w_glob_list = [
+        (client_id, local_weights, client_weight)
+        for client_id, local_weights, client_weight in w_glob_list
+        if client_id not in excluded_clients
+    ]
+    if not w_glob_list:
+        raise ValueError("No client updates remain after exclusions.")
     
     # If only one client remains, return its weights directly
     if len(w_glob_list) == 1:
         return copy.deepcopy(w_glob_list[0][1])
     
     # Initialize aggregated weights with zeros (same structure as first client's weights)
-    w = copy.deepcopy(w_glob_list[0][1])
-    for k in w.keys():
-        w[k] = torch.zeros_like(w[k])
+    aggregated_weights = copy.deepcopy(w_glob_list[0][1])
+    for layer_name in aggregated_weights:
+        aggregated_weights[layer_name] = torch.zeros_like(aggregated_weights[layer_name])
     
     # Initialize total weight
     total_weight = 0
     
     # Aggregate weights from all clients
-    for idx, w_local, idxs_weight in w_glob_list:
+    for _, local_weights, client_weight in w_glob_list:
         # Skip clients with small weights (should be a numeric comparison)
-        if isinstance(idxs_weight, (int, float)) and idxs_weight < 10:
+        if isinstance(client_weight, (int, float)) and client_weight < 10:
             continue
-            
-        # Add weighted contribution from this client
-        client_weight = idxs_weight
         total_weight += client_weight
-        
-        for k in w.keys():
-            w[k] += w_local[k] * client_weight
+        for layer_name in aggregated_weights:
+            aggregated_weights[layer_name] += local_weights[layer_name] * client_weight
     
     # Normalize by total weight
     if total_weight > 0:  # Avoid division by zero
-        for k in w.keys():
-            w[k] = torch.div(w[k], total_weight)
-    
-    return w
+        for layer_name in aggregated_weights:
+            aggregated_weights[layer_name] = torch.div(
+                aggregated_weights[layer_name], total_weight
+            )
+
+    return aggregated_weights
 
 
 def getWglobTSSWeight(w_glob_list: list, tss_weight):
@@ -293,31 +334,17 @@ def getWglobKrum(w_glob_list: list, krumClients=70, mclients=3):
 #     return results
 
 
-def train_user_normal(iter_, idx, args, server_defender, idxs_weight_dict, net_glob, dataset_train, dict_users_train, lr, with_local_save, base_dir, normal_save_candidates):
+def train_user_normal(
+    iter_, idx, args, server_defender, idxs_weight_dict, net_glob,
+    dataset_train, dict_users_train, lr, with_local_save, base_dir,
+    normal_save_candidates,
+):
     local_updater = LocalUpdater()
-    params = {
-            'data_augmentation_local': args.data_augmentation_local,
-            'model': args.model,
-            'dataset': args.dataset,
-            'num_classes': args.num_classes,
-            'data_portion': args.data_portion,
-            'max_workers': args.max_workers,
-            'local_bs': args.local_bs,
-            'local_ep': args.local_ep,
-            'local_ep_times': args.local_ep_times,
-            'input_size': args.input_size,
-            'blend_alpha': args.blend_alpha,
-
-            'local_ep_pretrain': args.local_ep_pretrain,
-            'attack_type': args.attack_type,
-            'pattern_choice': args.pattern_choice,
-            'pos_choice': args.pos_choice,
-            'label': args.label,
-
-            'device': args.device,
-            }
     local_updater.update_params(
-        dataset=dataset_train, idxs=dict_users_train[idx], params=params)
+        dataset=dataset_train,
+        idxs=dict_users_train[idx],
+        params=get_local_training_params(args),
+    )
     net_local = copy.deepcopy(net_glob)
     if args.fedsam:
         w_local, loss = local_updater.train_sam(
@@ -329,20 +356,28 @@ def train_user_normal(iter_, idx, args, server_defender, idxs_weight_dict, net_g
     if args.clipping:
         w_local = clipping(w_local, net_local)
 
-    if (iter_) % args.local_saving_interval == 0 and idx in normal_save_candidates and iter_ >= args.local_saving_start and with_local_save:
-        torch.save(w_local, os.path.join(
-            base_dir, 'local_normal_save', 'iter_{}_normal_{}.pt'.format(iter_, idx))
+    should_save = (
+        iter_ % args.local_saving_interval == 0
+        and idx in normal_save_candidates
+        and iter_ >= args.local_saving_start
+        and with_local_save
+    )
+    if should_save:
+        torch.save(
+            w_local,
+            os.path.join(base_dir, 'local_normal_save', f'iter_{iter_}_normal_{idx}.pt'),
         )
 
-    if args.subnet and (iter_) % args.subnet == 0 and iter_ >= args.subnet:
+    if args.subnet and iter_ % args.subnet == 0 and iter_ >= args.subnet:
         net_tss = server_defender.defense_subnetmasking(net_local, w_local)
-        torch.save(os.path.join(base_dir, 'visual',
-                   'iter_{}_normal_{}.pth'.format(iter_, idx)), net_tss)
+        torch.save(
+            os.path.join(base_dir, 'visual', f'iter_{iter_}_normal_{idx}.pth'),
+            net_tss,
+        )
 
     del net_local
     del local_updater
-    gc.collect()
-    torch.cuda.empty_cache()
+    clear_training_cache()
 
     return idx, w_local, idxs_weight_dict[idx], loss
 
@@ -402,31 +437,17 @@ def train_user_normal(iter_, idx, args, server_defender, idxs_weight_dict, net_g
 #     return results
 
 
-def train_user_attack(iter_, idx, args, attacker, server_defender, current_round_users_indices, idxs_weight_dict, net_glob, last_global_dict, dataset_train, dict_users_train, lr, with_local_save, base_dir):
+def train_user_attack(
+    iter_, idx, args, attacker, server_defender, current_round_users_indices,
+    idxs_weight_dict, net_glob, last_global_dict, dataset_train,
+    dict_users_train, lr, with_local_save, base_dir,
+):
     local_updater = LocalUpdater()
-    params = {
-            'data_augmentation_local': args.data_augmentation_local,
-            'model': args.model,
-            'dataset': args.dataset,
-            'num_classes': args.num_classes,
-            'data_portion': args.data_portion,
-            'max_workers': args.max_workers,
-            'local_bs': args.local_bs,
-            'local_ep': args.local_ep,
-            'local_ep_times': args.local_ep_times,
-            'input_size': args.input_size,
-            'blend_alpha': args.blend_alpha,
-
-            'local_ep_pretrain': args.local_ep_pretrain,
-            'attack_type': args.attack_type,
-            'pattern_choice': args.pattern_choice,
-            'pos_choice': args.pos_choice,
-            'label': args.label,
-
-            'device': args.device,
-            }
     local_updater.update_params(
-        dataset=dataset_train, idxs=dict_users_train[idx], params=params)
+        dataset=dataset_train,
+        idxs=dict_users_train[idx],
+        params=get_local_training_params(args),
+    )
     net_local = copy.deepcopy(net_glob)
     if args.attack_type != "peace" and iter_ >= args.start_attack:
         w_local, loss = local_updater.train_attack_dynamic(
@@ -439,56 +460,49 @@ def train_user_attack(iter_, idx, args, attacker, server_defender, current_round
         w_local = clipping(w_local, net_local)
 
     if args.scale:
-        for k in w_local.keys():
-            w_local[k] = len(current_round_users_indices)*w_local[k] - (
-                len(current_round_users_indices)-1)*net_local.to(args.device).state_dict()[k]
-
-    if (iter_) % args.local_saving_interval == 0 and iter_ >= args.local_saving_start and with_local_save:
-        # print("Saving")
-        torch.save(w_local, os.path.join(
-            base_dir, 'local_attack_save', 'iter_{}_attack_{}.pt'.format(iter_, idx))
+        w_local = scale_model_update(
+            w_local, net_local, current_round_users_indices, args.device
         )
 
-    if args.subnet and (iter_) % args.subnet == 0 and iter_ >= args.subnet:
+    should_save = (
+        iter_ % args.local_saving_interval == 0
+        and iter_ >= args.local_saving_start
+        and with_local_save
+    )
+    if should_save:
+        torch.save(
+            w_local,
+            os.path.join(base_dir, 'local_attack_save', f'iter_{iter_}_attack_{idx}.pt'),
+        )
+
+    if args.subnet and iter_ % args.subnet == 0 and iter_ >= args.subnet:
         net_tss = server_defender.defense_subnetmasking(net_local, w_local)
-        np.save(os.path.join(base_dir, 'visual',
-                'iter_{}_attack_{}.npy'.format(iter_, idx)), net_tss)
+        np.save(
+            os.path.join(base_dir, 'visual', f'iter_{iter_}_attack_{idx}.npy'),
+            net_tss,
+        )
 
     del net_local
     del local_updater
-    gc.collect()
-    torch.cuda.empty_cache()
+    clear_training_cache()
     return idx, w_local, idxs_weight_dict[idx], loss
 
-def parallelTrainingIntegrated(tasks: list):
 
+def parallelTrainingIntegrated(tasks: list):
     results = []
     for task in tasks:
         local_updater = LocalUpdater()
-        iter_, idx, args, is_attacker, attacker, server_defender, current_round_users_indices, idxs_weight_dict, net_glob, last_global_dict, dataset_train, dict_users_train, lr, with_local_save, base_dir, normal_save_candidates = task
-        params = {
-            'data_augmentation_local': args.data_augmentation_local,
-            'model': args.model,
-            'dataset': args.dataset,
-            'num_classes': args.num_classes,
-            'data_portion': args.data_portion,
-            'max_workers': args.max_workers,
-            'local_bs': args.local_bs,
-            'local_ep': args.local_ep,
-            'local_ep_times': args.local_ep_times,
-            'input_size': args.input_size,
-            'blend_alpha': args.blend_alpha,
-
-            'local_ep_pretrain': args.local_ep_pretrain,
-            'attack_type': args.attack_type,
-            'pattern_choice': args.pattern_choice,
-            'pos_choice': args.pos_choice,
-            'label': args.label,
-
-            'device': args.device,
-            }
+        (
+            iter_, idx, args, is_attacker, attacker, server_defender,
+            current_round_users_indices, idxs_weight_dict, net_glob,
+            last_global_dict, dataset_train, dict_users_train, lr,
+            with_local_save, base_dir, normal_save_candidates,
+        ) = task
         local_updater.update_params(
-            dataset=dataset_train, idxs=dict_users_train[idx], params=params)
+            dataset=dataset_train,
+            idxs=dict_users_train[idx],
+            params=get_local_training_params(args),
+        )
         net_local = copy.deepcopy(net_glob)
         if args.attack_on_attack != []:
             if idx in args.attack_on_attack:
@@ -504,36 +518,42 @@ def parallelTrainingIntegrated(tasks: list):
             w_local, loss = local_updater.train(
                 net=net_local.to(args.device), lr=lr)
 
-        # if args.clipping:
-        #     w_local = clipping(w_local, net_local)
-
         if args.scale:
-            for k in w_local.keys():
-                w_local[k] = len(current_round_users_indices)*w_local[k] - (
-                    len(current_round_users_indices)-1)*net_local.to(args.device).state_dict()[k]
-
-        if (iter_) % args.local_saving_interval == 0 and is_attacker and iter_ >= args.local_saving_start and with_local_save:
-            torch.save(w_local, os.path.join(
-                base_dir, 'local_attack_save', f'iter_{iter_}_attack_{idx}.pt'))
-        
-        if (iter_) % args.local_saving_interval == 0 and idx in normal_save_candidates and iter_ >= args.local_saving_start and with_local_save:
-            torch.save(w_local, os.path.join(
-                base_dir, 'local_normal_save', f'iter_{iter_}_normal_{idx}.pt')
+            w_local = scale_model_update(
+                w_local, net_local, current_round_users_indices, args.device
             )
 
-        if args.subnet and (iter_) % args.subnet == 0 and iter_ >= args.subnet:
-            net_tss = server_defender.defense_subnetmasking(net_local, w_local)
-            np.save(os.path.join(base_dir, 'visual',
-                    f'iter_{iter_}_{"attack" if is_attacker else "normal"}_{idx}.npy'), net_tss)
+        should_save = (
+            iter_ % args.local_saving_interval == 0
+            and iter_ >= args.local_saving_start
+            and with_local_save
+        )
+        if should_save and is_attacker:
+            torch.save(
+                w_local,
+                os.path.join(base_dir, 'local_attack_save', f'iter_{iter_}_attack_{idx}.pt'),
+            )
+        if should_save and idx in normal_save_candidates:
+            torch.save(
+                w_local,
+                os.path.join(base_dir, 'local_normal_save', f'iter_{iter_}_normal_{idx}.pt'),
+            )
 
-        if args.no_attack_on_attack:
-            results.append((idx, net_glob.state_dict(),
-                           idxs_weight_dict[idx], loss))
-        else:
-            results.append((idx, w_local, idxs_weight_dict[idx], loss))
-        
+        if args.subnet and iter_ % args.subnet == 0 and iter_ >= args.subnet:
+            net_tss = server_defender.defense_subnetmasking(net_local, w_local)
+            np.save(
+                os.path.join(
+                    base_dir,
+                    'visual',
+                    f'iter_{iter_}_{"attack" if is_attacker else "normal"}_{idx}.npy',
+                ),
+                net_tss,
+            )
+
+        result_weights = net_glob.state_dict() if args.no_attack_on_attack else w_local
+        results.append((idx, result_weights, idxs_weight_dict[idx], loss))
+
         del net_local
         del local_updater
-        gc.collect()
-        torch.cuda.empty_cache()
+        clear_training_cache()
     return results
