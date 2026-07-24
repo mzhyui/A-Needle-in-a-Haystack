@@ -3,8 +3,18 @@
 # Python version: 3.6
 
 import argparse
-import yaml
 import os
+
+import yaml
+
+
+def load_config_defaults(parser, config_path):
+    with open(config_path, 'r') as config_file:
+        config_defaults = yaml.safe_load(config_file) or {}
+    if not isinstance(config_defaults, dict):
+        raise ValueError(f"Configuration must be a mapping: {config_path}")
+    parser.set_defaults(**config_defaults)
+
 
 def args_parser() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -196,12 +206,9 @@ def args_parser() -> argparse.Namespace:
     parser.add_argument('--propagate', type=int, default=0, help="propagate the info to stdout")
     parser.add_argument('--verbose', type=int, default=0, help="verbose")
 
-    args = parser.parse_args()
-    if args.config:
-        with open(args.config, 'r') as f:
-            parser.set_defaults(**yaml.safe_load(f))
-            args = parser.parse_args()
-    else:
-        raise Exception("No config file provided!")
+    initial_args = parser.parse_args()
+    if not initial_args.config:
+        raise ValueError("No config file provided!")
 
-    return args
+    load_config_defaults(parser, initial_args.config)
+    return parser.parse_args()

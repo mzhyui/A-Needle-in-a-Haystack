@@ -1181,38 +1181,32 @@ class Defender(object):
         return global_w
 
     def getWglobKrum(self, w_glob_list: list, krumClients=2, mclients=2):
-        kd = KrumDefense(mclients, krumClients)
-        clients = []
+        krum_defense = KrumDefense(mclients, krumClients)
+        client_updates = [
+            (client_weight, local_weights)
+            for _, local_weights, client_weight in w_glob_list
+        ]
+        selected_updates = krum_defense.defend_before_aggregation(client_updates)
 
-        # Prepare clients list for Krum defense
-        for idx, w_local, idxs_weight in w_glob_list:
-            clients.append(tuple([idxs_weight, w_local]))
-
-        # Apply Krum defense
-        clients_flatten_weight = kd.defend_before_aggregation(clients)
-
-        # Initialize aggregated weights with zeros (same structure as first client's weights)
-        w = copy.deepcopy(clients_flatten_weight[0][1])
-        for k in w.keys():
-            w[k] = torch.zeros_like(w[k])
-
-        # Initialize total weight
+        aggregated_weights = copy.deepcopy(selected_updates[0][1])
+        for layer_name in aggregated_weights:
+            aggregated_weights[layer_name] = torch.zeros_like(
+                aggregated_weights[layer_name]
+            )
         total_weight = 0
+        for client_weight, local_weights in selected_updates:
+            total_weight += client_weight
+            for layer_name in aggregated_weights:
+                aggregated_weights[layer_name] += (
+                    local_weights[layer_name] * client_weight
+                )
 
-        # Aggregate weights from all selected clients
-        for idxs_weight, w_local in clients_flatten_weight:
-            # Add weighted contribution from this client
-            total_weight += idxs_weight
-
-            for k in w.keys():
-                w[k] += w_local[k] * idxs_weight
-
-        # Normalize by total weight
-        if total_weight > 0:  # Avoid division by zero
-            for k in w.keys():
-                w[k] = torch.div(w[k], total_weight)
-
-        return w
+        if total_weight > 0:
+            for layer_name in aggregated_weights:
+                aggregated_weights[layer_name] = torch.div(
+                    aggregated_weights[layer_name], total_weight
+                )
+        return aggregated_weights
 
     def getWglobFlame(self, w_local_list, w_glob):
         """
@@ -1276,17 +1270,25 @@ class Defender(object):
 
         return np.array(candidate_indices).tolist()
 
+    @staticmethod
+    def _weight_updates(local_weights, global_model):
+        global_weights = global_model.state_dict()
+        return {
+            layer_name: local_weights[layer_name] - global_weights[layer_name]
+            for layer_name in local_weights
+        }
+
     def clipping(self, w_local: dict, net_global: torch.nn.Module, threshold=0.1):
-        d_w = copy.deepcopy(w_local)
-        for k in w_local.keys():
-            d_w[k] = w_local[k] - net_global.state_dict()[k]
-        d_n = copy.deepcopy(w_local)
-        for k in w_local.keys():
-            d_n[k] = torch.nn.functional.normalize(
-                d_w[k].float(), dim=0)
-        for k in w_local.keys():
-            w_local[k] = w_local[k] - (threshold*torch.nn.functional.normalize(
-                d_n[k].float(), dim=0)).long()
+        weight_updates = self._weight_updates(w_local, net_global)
+        for layer_name, weight_update in weight_updates.items():
+            normalized_update = torch.nn.functional.normalize(
+                weight_update.float(), dim=0
+            )
+            w_local[layer_name] = w_local[layer_name] - (
+                threshold * torch.nn.functional.normalize(
+                    normalized_update.float(), dim=0
+                )
+            ).long()
         return w_local
 
     def norm_clipping(self, w_local: dict, net_global: torch.nn.Module, max_norm: float = 1.0):
@@ -1301,28 +1303,17 @@ class Defender(object):
         Returns:
             Clipped local weights
         """
-        # Calculate the weight updates (difference between local and global)
-        d_w = {}
-        for k in w_local.keys():
-            d_w[k] = w_local[k] - net_global.state_dict()[k]
-
-        # Calculate the total norm of all weight updates
-        total_norm = 0.0
-        for k in d_w.keys():
-            total_norm += torch.norm(d_w[k].float(), p=2).item() ** 2
-        total_norm = total_norm ** 0.5
-
-        # Calculate the clipping factor
+        global_weights = net_global.state_dict()
+        weight_updates = self._weight_updates(w_local, net_global)
+        total_norm = sum(
+            torch.norm(weight_update.float(), p=2).item() ** 2
+            for weight_update in weight_updates.values()
+        ) ** 0.5
         clip_factor = min(1.0, max_norm / (total_norm + 1e-10))
-
-        # Apply clipping to the weight updates
-        w_clipped = copy.deepcopy(w_local)
-        for k in w_local.keys():
-            # Clip the update and apply it back to get the clipped weights
-            clipped_update = d_w[k] * clip_factor
-            w_clipped[k] = net_global.state_dict()[k] + clipped_update
-
-        return w_clipped
+        return {
+            layer_name: global_weights[layer_name] + weight_update * clip_factor
+            for layer_name, weight_update in weight_updates.items()
+        }
 
     def norm_clipping_per_layer(self, w_local: dict, net_global: torch.nn.Module, max_norm: float = 1.0):
         """
@@ -1336,22 +1327,15 @@ class Defender(object):
         Returns:
             Clipped local weights
         """
-        w_clipped = copy.deepcopy(w_local)
-
-        for k in w_local.keys():
-            # Calculate the weight update for this layer
-            d_w = w_local[k] - net_global.state_dict()[k]
-
-            # Calculate the norm of this layer's update
-            layer_norm = torch.norm(d_w.float(), p=2).item()
-
-            # Calculate the clipping factor for this layer
-            clip_factor = min(1.0, max_norm / (layer_norm + 1e-10))
-
-            # Apply clipping to this layer's weights
-            w_clipped[k] = net_global.state_dict()[k] + d_w * clip_factor
-
-        return w_clipped
+        global_weights = net_global.state_dict()
+        weight_updates = self._weight_updates(w_local, net_global)
+        return {
+            layer_name: global_weights[layer_name] + weight_update * min(
+                1.0,
+                max_norm / (torch.norm(weight_update.float(), p=2).item() + 1e-10),
+            )
+            for layer_name, weight_update in weight_updates.items()
+        }
 
 
 def flatten_grads_gpu(gradients):

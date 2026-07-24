@@ -1,6 +1,4 @@
 import torch
-import sys
-import os
 
 
 class TransformerNet(torch.nn.Module):
@@ -10,7 +8,6 @@ class TransformerNet(torch.nn.Module):
         self.fc2 = torch.nn.Linear(16, 32)
         self.fc3 = torch.nn.Linear(32, 1)
         self.relu = torch.nn.ReLU()
-        self.sigomoid = torch.nn.Sigmoid()
         self.tanh = torch.nn.Tanh()
 
     def forward(self, x):
@@ -19,8 +16,7 @@ class TransformerNet(torch.nn.Module):
         x = self.fc2(x)
         x = self.relu(x)
         x = self.fc3(x)
-        out = self.tanh(x)
-        return out
+        return self.tanh(x)
 
 
 class Embed(torch.nn.Module):
@@ -29,10 +25,12 @@ class Embed(torch.nn.Module):
         self.TransNet = TransformerNet()
         self.TransNet.load_state_dict(torch.load('./assets/step_fun.pkl', weights_only=True))
 
-    def forward(self, P, M):
-        a,b,c,d = P.shape
-        rand = torch.rand_like(P).reshape(-1, 1)
-        temp1 = torch.cat((rand, P.reshape(-1, 1), M.reshape(-1, 1)), 1)
-        out = self.TransNet(temp1).view(-1, 1, c, d)
-        out = out.view(a,b,c,d)         
-        return out
+    def forward(self, pattern, mask):
+        batch_size, channels, height, width = pattern.shape
+        random_values = torch.rand_like(pattern).reshape(-1, 1)
+        transformer_input = torch.cat(
+            (random_values, pattern.reshape(-1, 1), mask.reshape(-1, 1)),
+            dim=1,
+        )
+        transformed = self.TransNet(transformer_input)
+        return transformed.view(batch_size, channels, height, width)
